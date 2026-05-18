@@ -17,6 +17,11 @@ public class DownloadDAO {
     // ─── INSERT ───────────────────────────────────────────────
     // Call this when user adds a new download URL
     public int addDownload(Download download) {
+        if (connection == null) {
+            System.out.println("✗ Cannot add download because the database connection is unavailable.");
+            return -1;
+        }
+
         String sql = "INSERT INTO downloads (url, file_name, file_size, status, progress, chunks, save_path) " +
                 "VALUES (?, ?, ?, ?, ?, ?, ?)";
         try (PreparedStatement stmt = connection.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
@@ -45,6 +50,11 @@ public class DownloadDAO {
     // ─── UPDATE STATUS ────────────────────────────────────────
     // Call this when status changes: PENDING → DOWNLOADING → COMPLETED / FAILED
     public void updateStatus(int id, String status) {
+        if (connection == null) {
+            System.out.println("✗ Cannot update status because the database connection is unavailable.");
+            return;
+        }
+
         String sql = "UPDATE downloads SET status = ? WHERE id = ?";
         try (PreparedStatement stmt = connection.prepareStatement(sql)) {
             stmt.setString(1, status);
@@ -59,6 +69,10 @@ public class DownloadDAO {
     // ─── UPDATE PROGRESS ─────────────────────────────────────
     // Call this periodically from threads to track % done
     public void updateProgress(int id, double progress) {
+        if (connection == null) {
+            return;
+        }
+
         String sql = "UPDATE downloads SET progress = ? WHERE id = ?";
         try (PreparedStatement stmt = connection.prepareStatement(sql)) {
             stmt.setDouble(1, progress);
@@ -73,6 +87,11 @@ public class DownloadDAO {
     // Returns all downloads — useful for showing download history
     public List<Download> getAllDownloads() {
         List<Download> downloads = new ArrayList<>();
+        if (connection == null) {
+            System.out.println("✗ Cannot load download history because the database connection is unavailable.");
+            return downloads;
+        }
+
         String sql = "SELECT * FROM downloads ORDER BY created_at DESC";
         try (Statement stmt = connection.createStatement();
              ResultSet rs = stmt.executeQuery(sql)) {
@@ -97,6 +116,11 @@ public class DownloadDAO {
 
     // ─── GET BY ID ────────────────────────────────────────────
     public Download getDownloadById(int id) {
+        if (connection == null) {
+            System.out.println("✗ Cannot load download because the database connection is unavailable.");
+            return null;
+        }
+
         String sql = "SELECT * FROM downloads WHERE id = ?";
         try (PreparedStatement stmt = connection.prepareStatement(sql)) {
             stmt.setInt(1, id);
@@ -122,6 +146,11 @@ public class DownloadDAO {
 
     // ─── DELETE ───────────────────────────────────────────────
     public void deleteDownload(int id) {
+        if (connection == null) {
+            System.out.println("✗ Cannot delete download because the database connection is unavailable.");
+            return;
+        }
+
         String sql = "DELETE FROM downloads WHERE id = ?";
         try (PreparedStatement stmt = connection.prepareStatement(sql)) {
             stmt.setInt(1, id);
