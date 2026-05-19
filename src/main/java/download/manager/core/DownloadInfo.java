@@ -14,6 +14,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class DownloadInfo {
 
@@ -25,6 +27,11 @@ public class DownloadInfo {
     private long fileSize;
     private URL nonStringUrl;
     private int downloadId;
+    // Track all active downloads so pause/resume can find them
+    public static final Map<Integer, DownloadInfo> activeDownloads = new ConcurrentHashMap<>();
+
+    private volatile boolean paused = false;
+    private final Object pauseLock = new Object();
 
     public DownloadInfo(String downloadUrl, DownloadDAO dao) {
         this.downloadUrl = downloadUrl;
@@ -70,6 +77,7 @@ public class DownloadInfo {
                 System.out.println("✗ Failed to save download to DB.");
                 return;
             }
+            activeDownloads.put(downloadId, this);
 
             // ─── STEP 4: Create the output file ───────────────────────
             RandomAccessFile outputFile = new RandomAccessFile(fileName, "rw");
@@ -111,7 +119,8 @@ public class DownloadInfo {
                         dao,
                         downloadId,
                         totalBytesDownloaded,
-                        fileSize
+                        fileSize,
+                        this  // ← add this
                 ));
 
                 startByte = endByte + 1;
@@ -131,6 +140,8 @@ public class DownloadInfo {
                 System.out.println("✗ Download FAILED: " + fileName);
             }
 
+            activeDownloads.remove(downloadId);
+
             outputFile.close();
 
         } catch (MalformedURLException e) {
@@ -145,4 +156,14 @@ public class DownloadInfo {
             if (downloadId != -1) dao.updateStatus(downloadId, "FAILED");
         }
     }
+    public void togglePause() {
+        paused = !paused;
+        if (!paused) {
+            synchronized (pauseLock) {
+                pauseLock.notifyAll(); // wake up all sleeping threads
+            }
+        }
+    }
+    public boolean isPaused() { return paused; }
+    public Object getPauseLock() { return pauseLock; }
 }

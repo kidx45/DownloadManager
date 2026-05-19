@@ -14,18 +14,20 @@ import java.util.logging.Logger;
 public class Downloader implements Runnable {
 
     private final URL downloadURL;
-    private final long startByte;        // changed to long (int overflows on large files)
+    private final long startByte;
     private final long endByte;
     private final int threadNum;
     private final RandomAccessFile outputFile;
     private final DownloadDAO dao;
     private final int downloadId;
-    private final AtomicLong totalBytesDownloaded; // shared counter across all threads
+    private final AtomicLong totalBytesDownloaded;
     private final long totalFileSize;
+    private final DownloadInfo downloadInfo;
 
     public Downloader(URL downloadURL, long startByte, long endByte, int threadNum,
                       RandomAccessFile outputFile, DownloadDAO dao, int downloadId,
-                      AtomicLong totalBytesDownloaded, long totalFileSize) {
+                      AtomicLong totalBytesDownloaded, long totalFileSize,
+                      DownloadInfo downloadInfo) {
         this.downloadURL = downloadURL;
         this.startByte = startByte;
         this.endByte = endByte;
@@ -35,6 +37,7 @@ public class Downloader implements Runnable {
         this.downloadId = downloadId;
         this.totalBytesDownloaded = totalBytesDownloaded;
         this.totalFileSize = totalFileSize;
+        this.downloadInfo = downloadInfo;
     }
 
     @Override
@@ -53,7 +56,6 @@ public class Downloader implements Runnable {
             httpURLConnection.setRequestProperty("Accept", "application/octet-stream,*/*");
             httpURLConnection.setRequestProperty("Range", "bytes=" + startByte + "-" + endByte);
 
-            // Check server supports range requests
             int responseCode = httpURLConnection.getResponseCode();
             if (responseCode != HttpURLConnection.HTTP_PARTIAL && responseCode != HttpURLConnection.HTTP_OK) {
                 System.out.println("✗ Thread " + threadNum + ": Server doesn't support range requests! Code: " + responseCode);
@@ -61,24 +63,38 @@ public class Downloader implements Runnable {
             }
 
             InputStream stream = httpURLConnection.getInputStream();
-            byte[] buffer = new byte[4096]; // read 4KB at a time (faster than 1 byte at a time)
+            byte[] buffer = new byte[4096];
             int bytesRead;
             long currentPosition = startByte;
 
             while ((bytesRead = stream.read(buffer)) != -1) {
-                // ─── FIX: synchronized block prevents race condition ───
-                // seek() + write() happen together, no other thread can interrupt
+
+                // ─── PAUSE CHECK ──────────────────────────────────────
+                synchronized (downloadInfo.getPauseLock()) {
+                    while (downloadInfo.isPaused()) {
+                        try {
+                            dao.updateStatus(downloadId, "PAUSED");
+                            System.out.println("Thread " + threadNum + " paused...");
+                            downloadInfo.getPauseLock().wait();
+                            dao.updateStatus(downloadId, "DOWNLOADING");
+                            System.out.println("Thread " + threadNum + " resumed!");
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            return;
+                        }
+                    }
+                }
+                // ──────────────────────────────────────────────────────
+
                 synchronized (outputFile) {
                     outputFile.seek(currentPosition);
                     outputFile.write(buffer, 0, bytesRead);
                 }
                 currentPosition += bytesRead;
 
-                // Update shared progress counter
                 long downloaded = totalBytesDownloaded.addAndGet(bytesRead);
                 double progress = (downloaded * 100.0) / totalFileSize;
 
-                // Update DB every 1% to avoid hammering the DB
                 if ((int) progress % 1 == 0) {
                     dao.updateProgress(downloadId, Math.min(progress, 100.0));
                 }
